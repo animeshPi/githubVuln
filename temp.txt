@@ -1,0 +1,250 @@
+'use client'
+
+import {
+    ResizableHandle,
+    ResizablePanel,
+    ResizablePanelGroup,
+  } from "@/components/ui/resizable";
+  import { SelectScrollable } from "./Select";
+  import { Input } from "@/components/ui/input";
+  import { Button } from "./ui/button";
+  import React, { useEffect, useRef, useState } from 'react';
+  import {
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
+  } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress"
+import { useToast } from "@/components/ui/use-toast"
+import Image from "next/image";
+
+
+  
+const buildTree = (filePaths) => {
+  const root = [];
+
+  filePaths.forEach(path => {
+    const parts = path.split('/');
+    let currentLevel = root;
+
+    parts.forEach((part, index) => {
+      const existingNode = currentLevel.find(node => node.label === part);
+
+      if (existingNode) {
+        currentLevel = existingNode.children;
+      } else {
+        const newNode = {
+          key: `${currentLevel.length}`,
+          label: part,
+          children: []
+        };
+
+        currentLevel.push(newNode);
+
+        if (index === parts.length - 1) {
+          delete newNode.children;
+        } else {
+          currentLevel = newNode.children;
+        }
+      }
+    });
+  });
+
+  return root;
+};
+
+  
+  function isValidGitHubURL(url) {
+    const githubRegex = /^(https?:\/\/)?(www\.)?github\.com\/\S*$/;
+    return githubRegex.test(url);
+  }
+
+  const Resizable = () => {
+
+    const { toast } = useToast()
+    const [filename, setFilename] = useState("GitHub Repo")
+    const [ws, setWs] = useState(null);
+    const getInput = useRef();
+    const vulnContainerRef = useRef();
+    const [vulnerabilities, setVulnerabilities] = useState([]);
+
+    const [progress, setProgress] = useState(0);
+    let fileLength = 0;
+    let counter = 0;
+
+    const [loading, setLoading] = useState(false)
+    const [disableBtn, setDisableBtn] = useState(false)
+    const [fileStructure, setFileStructure] = useState({})
+  
+    useEffect(() => {
+      const newWs = new WebSocket('ws://localhost:8765');
+      newWs.onmessage = (event) => {
+        console.log(typeof(event.data));
+        const data = JSON.parse(event.data)
+
+        
+        if(data["any_vulnerability_found"]){
+          setLoading(false)
+          counter++;
+          const percentage = parseInt((counter / fileLength) * 100);
+          setProgress(percentage);
+          if (percentage === 100) {
+            setDisableBtn(false);
+        }
+          
+
+          const newVulnerability = {
+            vulnerability_type: data["vulnerability_type"],
+            location: data["location"],
+            vulnerability_description: data["vulnerability_description"],
+            solution_description: data["solution_description"],
+          };
+
+          
+
+          setVulnerabilities((prev) => [...prev, newVulnerability]);
+
+        }else if(data["file_length"]){
+
+          console.log(data["file_length"])
+          fileLength = data["file_length"]
+          console.log(fileLength)
+          
+
+
+        }else if(data["status"] === "completed"){
+
+          toast({
+            title: "XENO AI",
+            description: "Analysis Completed Successfully",
+          })
+          
+        }else if(data["error"]){
+          setLoading(false)
+          toast({
+            variant: "destructive",
+            title: "Uh oh! Something went wrong.",
+            description: data["error"],
+            
+          })
+          
+        }else if(data["file_structure"]){
+          const treeData = buildTree(data["file_structure"]);
+          setFileStructure(treeData)
+          console.log(treeData)
+          console.log()
+          console.log(fileStructure)
+        }
+
+      };
+      setWs(newWs);
+  
+      return () => {
+        newWs.close();
+      };
+    }, [fileLength, counter, progress]);
+  
+    const sendData = () => {
+      setVulnerabilities([]);
+      setLoading(true)
+      setDisableBtn(true)
+      setProgress(0)
+      console.log(counter)
+      counter = 0;
+      console.log(counter)
+
+
+      if (ws && getInput.current) {
+        const url = getInput.current.value;
+        const isValidURL = isValidGitHubURL(url);
+
+        if(!isValidURL){
+            setLoading(false)
+            return;
+        }
+
+        const parts = url.split("/");
+        const repoName = parts[parts.length - 1].replace(".git", "");
+        console.log(repoName)
+        setFilename(repoName)
+        ws.send(JSON.stringify({ "url": url }));
+      }
+    };
+
+    return (
+      <ResizablePanelGroup
+        direction="horizontal"
+        className="min-h-screen w-full rounded-lg border"
+      >
+        <ResizablePanel defaultSize={15}>
+          <div className="flex h-full justify-center">
+            <div className="border-b flex justify-center items-center w-full h-[60px] p-2">
+              <SelectScrollable />
+            </div>
+          </div>
+        </ResizablePanel>
+        <ResizableHandle />
+        <ResizablePanel defaultSize={45}>
+          <div className="flex flex-col h-full">
+            <div className="border-b flex justify-between items-center w-full h-[60px] p-6">
+              <span className="text-lg font-medium tracking-wide">{filename}</span>
+              {(progress > 0)? (<div className="flex flex-col text-xs gap-2">
+              <span>{progress}% Repo Analyzed</span>
+              <Progress className="w-[100%] rounded h-[5px]" value={progress} />
+              </div>): ""}
+              
+            </div>
+            <div className="m-2 flex flex-row gap-2">
+              <Input ref={getInput} type="text" placeholder="GitHub URL" />
+              <Button onClick={sendData} disabled={disableBtn}>Submit</Button>
+            </div>
+            <div id="hub" ref={vulnContainerRef} className="flex flex-col h-full gap-2 w-full p-2 overflow-y-auto">
+              
+              {(loading)? (<div className="text-white flex justify-center h-full items-center">
+
+<Image src="/logoWithWhite.png" className="mr-4 spin-infinite" alt="Logo" width={20} height={20}/><span className="text-xs">Spinning Containers</span>
+</div>):""}
+              {(vulnerabilities.length === 0  && !loading)?(
+
+                <div className="text-white flex justify-center h-full items-center">
+
+                  <Image src="/logoWithWhite.png" className="mr-4" alt="Logo" width={20} height={20}/>
+                </div>
+              ):""}
+              {(vulnerabilities)?(vulnerabilities.map((vuln, index) => (
+  <Card className="cursor-pointer hover:bg-neutral-800" key={index}>
+    <CardHeader>
+      <CardTitle className="text-base">{vuln.vulnerability_type}</CardTitle>
+      <CardDescription className="text-xs">
+        File Path: {vuln.location}
+      </CardDescription>
+    </CardHeader>
+    <CardContent>
+      <CardDescription className="text-white text-xs">
+        Vulnerability: {vuln.vulnerability_description}
+      </CardDescription>
+      <CardDescription className="text-white mt-2 text-xs">
+        Solution: {vuln.solution_description}
+      </CardDescription>
+    </CardContent>
+  </Card>
+))):""}
+
+            
+            </div>
+          </div>
+        </ResizablePanel>
+        <ResizableHandle />
+        <ResizablePanel defaultSize={50}>
+          <div className="flex h-full justify-center">
+            <div className="border-b w-full h-[60px]"></div>
+          </div>
+        </ResizablePanel>
+      </ResizablePanelGroup>
+    );
+  }
+  
+
+  export default Resizable;
